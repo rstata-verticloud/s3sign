@@ -1,0 +1,78 @@
+#!/bin/bash
+
+s3_url() {
+  local bucket=${1}
+  local path=${2}
+  local url="https://${bucket}.s3.amazonaws.com/${path}"
+
+  echo ${url}
+}
+
+s3_signed_url() {
+  local bucket=${1}
+  local path=${2}
+  local awsKey=${3}
+  local awsSecret=${4}
+  local expires=$((`date +%s`+${5}))
+  local stringToSign="GET\n\n\n${expires}\n/${bucket}/${path}"
+
+  local base64Signature=`echo -ne "${stringToSign}" | tee /tmp/foo \
+    | openssl dgst -sha1 -binary -hmac "${awsSecret}" \
+    | openssl enc -base64`
+
+  local escapedSignature=`_s3_urlencode ${base64Signature}`
+  local escapedAwsKey=`_s3_urlencode ${awsKey}`
+
+  local query="AWSAccessKeyId=${escapedAwsKey}&Expires=${expires}&Signature=${escapedSignature}"
+  local url="`s3_url ${bucket} ${path}`?${query}"
+
+  echo ${url}
+}
+
+# from: http://ethertubes.com/bash-snippet-url-encoding/
+_s3_urlencode () {
+  local tab="\t"
+  local i="$@"
+
+  i=${i//%/%25}  ; i=${i//' '/%20} ; i=${i//$tab/%09}
+  i=${i//!/%21}  ; i=${i//\"/%22}  ; i=${i//#/%23}
+  i=${i//\$/%24} ; i=${i//\&/%26}  ; i=${i//\'/%27} #' unconfuse emacs
+  i=${i//(/%28}  ; i=${i//)/%29}   ; i=${i//\*/%2a}
+  i=${i//+/%2b}  ; i=${i//,/%2c}   ; i=${i//-/%2d}
+  i=${i//\./%2e} ; i=${i//\//%2f}  ; i=${i//:/%3a}
+  i=${i//;/%3b}  ; i=${i//</%3c}   ; i=${i//=/%3d}
+  i=${i//>/%3e}  ; i=${i//\?/%3f}  ; i=${i//@/%40}
+  i=${i//\[/%5b} ; i=${i//\\/%5c}  ; i=${i//\]/%5d}
+  i=${i//\^/%5e} ; i=${i//_/%5f}   ; i=${i//\`/%60}
+  i=${i//\{/%7b} ; i=${i//|/%7c}   ; i=${i//\}/%7d}
+  i=${i//\~/%7e}
+  echo "$i"
+}
+
+
+usage="Usage: ${0} [--time SEC|--public] bucket path"
+
+if [ ${1} = '--help' ]; then
+  echo ${usage}
+  exit 0
+fi
+
+secs=60
+if [ ${1} = '--time' ]; then
+  secs=${2}
+  shift 2
+elif [ ${1} = '--public' ]; then
+  public=true
+  shift
+fi
+
+if [ $# -ne 2 ]; then
+  echo ${usage} >&2
+  exit 1
+fi
+
+if [ -z ${public} ]; then
+  s3_signed_url ${1} ${2} ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} ${secs}
+else
+  s3_url ${1} ${2}
+fi
